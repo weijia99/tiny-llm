@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<module external.system.id="pyproject.toml" type="PYTHON_MODULE" version="4">
+  <component name="NewModuleRootManager">
+    <content url="file://$MODULE_DIR$">
+      <sourceFolder url="file://$MODULE_DIR$/src" />
+      <excludeFolder url="file://$MODULE_DIR$/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/src/extensions/build/tiny_llm_ext._ext/CMakeFiles/nanobind-static.dir/Users/weijia/code/python/tiny-llm/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/src/extensions_ref/build/tiny_llm_ext_ref._ext/CMakeFiles/nanobind-static.dir/Users/weijia/code/python/tiny-llm/.venv" />
+    </content>
+    <orderEntry type="jdk" jdkName="Python 3.12 (tiny-llm)" jdkType="Python SDK" />
+    <orderEntry type="sourceFolder" forTests="false" />
+  </component>
+  <component name="PyDocumentationSettings">
+    <option name="format" value="PLAIN" />
+    <option name="myDocStringFormat" value="Plain" />
+  </component>
+  <component name="TestRunnerService">
+    <option name="PROJECT_TEST_RUNNER" value="py.test" />
+  </component>
+</module>

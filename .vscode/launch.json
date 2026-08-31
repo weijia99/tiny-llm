@@ -1,0 +1,43 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Pytest: current file (pdm env)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "pytest",
+      "args": [
+        "${file}",
+        "-q"
+      ],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/src:${workspaceFolder}"
+      },
+      "justMyCode": false
+    },
+    {
+      "name": "Pytest: week/day via dev-tools (pdm env)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/scripts/dev-tools.py",
+      "args": [
+        "test",
+        "--week",
+        "1",
+        "--day",
+        "1",
+        "--",
+        "-k",
+        "task_1"
+      ],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/src:${workspaceFolder}"
+      },
+      "justMyCode": false
+    }
+  ]
+}
