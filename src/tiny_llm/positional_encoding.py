@@ -19,9 +19,13 @@ class RoPE:
         self.sin_cache = mx.zeros((seq_len, self.half_dims), dtype=mx.float32)
 
         freqs = base ** (-2 * mx.arange(self.half_dims, dtype=mx.float32) / dims)
-        for pos in range(seq_len):
-            self.cos_cache[pos] = mx.cos(pos * freqs)
-            self.sin_cache[pos] = mx.sin(pos * freqs)
+        # for pos in range(seq_len):
+        #     self.cos_cache[pos] = mx.cos(pos * freqs)
+        #     self.sin_cache[pos] = mx.sin(pos * freqs)
+        # 向量优化
+        self.cos_cache = mx.cos(mx.arange(seq_len, dtype=mx.float32).reshape(-1, 1) * freqs)
+        self.sin_cache = mx.sin(mx.arange(seq_len, dtype=mx.float32).reshape(-1, 1) * freqs)
+
 
     def __call__(
         self, x: mx.array, offset: list[slice] | slice | None = None

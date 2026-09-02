@@ -16,4 +16,7 @@ def linear(
 
 
 def silu(x: mx.array) -> mx.array:
-    pass
+    z = mx.exp(-abs(x))
+    # 通过使用where进行判断条件，那些大于等于0的元素使用x/(1+z)，小于0的元素使用x*z/(1+z)
+    ans = mx.where(x >= 0, x / (1 + z), x * z / (1 + z))
+    return ans
