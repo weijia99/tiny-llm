@@ -90,8 +90,15 @@ class TinyKvFullCache(TinyKvCache):
         mask_length: int | None = None,
         mask: mx.array | str | None = None,
     ) -> tuple[mx.array, mx.array, int, Optional[mx.array]]:
-        pass
-
+        if self.key_values is None:
+            self.key_values = (key, value)
+        else:
+            self.key_values = (
+                mx.concat([self.key_values[0], key], axis=2),
+                mx.concat([self.key_values[1], value], axis=2),
+            )
+        self.offset += key.shape[2] if key.shape[2] > 0 else 1
+        return self.key_values[0], self.key_values[1], self.offset, mask
     def materialize(self):
         pass
 

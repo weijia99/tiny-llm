@@ -54,7 +54,9 @@ class SimpleMultiHeadAttention:
         p_q = linear(query, self.wq).reshape(*query.shape[:-1], self.num_heads, self.head_size).swapaxes(-2, -3)
         p_k = linear(key, self.wk).reshape(*key.shape[:-1], self.num_heads, self.head_size).swapaxes(-2, -3)
         p_v = linear(value, self.wv).reshape(*value.shape[:-1], self.num_heads, self.head_size).swapaxes(-2, -3)
-        scaled_attention = scaled_dot_product_attention_simple(p_q, p_k, p_v, mask=mask).swapaxes(-2, -3).reshape(*query.shape[:-1], self.hidden_size)
+        scaled_attention = scaled_dot_product_attention_simple(p_q, p_k, p_v, 
+                                                               mask=mask).swapaxes(-2, -3).reshape(*query.shape[:-1],
+                                                                                                    self.hidden_size)
         output = linear(scaled_attention, self.wo)
         return output
         
