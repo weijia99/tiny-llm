@@ -76,7 +76,31 @@ def dequantize_weights(
     group_size: int,
     bits: int,
 ) -> mx.array:
-    pass
+    # 实现对应的dequantization操作
+    # 输出dense_weigts [k,N] BF16
+    # scale [k,N/group_size] BF16
+    # bias [k,N/group_size] BF16
+    # 通过向量乘法来进行加速计算，实现ax+b的操作
+    # 1.weights 中的一个uint32等于8个uint4，8个uint4对应8个BF16的scale和bias
+    # 2.需要解开对应的uint32，变成对应的uint4，然后进行广播
+    shifts = mx.arange(32//bits, dtype=mx.int32)*bits
+    # 生成对应的mask0，4，8，12，16，20，24，28，相当于解开了32位的uint32，变成了8个uint4
+    x = (weight[..., None] >> shifts) & ((1 << bits) - 1)
+    # 左边形状 (..., N/8, 1)，右边形状 (8,)。按广播规则，最后两维对齐后扩展成 (..., N/8, 8)
+    # 最终x的形状为 (..., N/8, 8)
+    # 接下来实现scale*x + bias的操作
+    #开始计算重复次数
+    repeat_times = group_size // (32 // bits)
+    # 广播重复
+    scale = mx.repeat(scales[..., None], repeat_times, axis=-1)
+    scale = scale.reshape(*scale.shape[:-2], x.shape[-2], -1)
+    if biases is not None:
+        bias = mx.repeat(biases[..., None], repeat_times, axis=-1)
+        bias = bias.reshape(*bias.shape[:-2], x.shape[-2], -1)
+        return (x.astype(mx.bfloat16) * scale + bias).astype(mx.bfloat16).reshape(-1, x.shape[-2]*x.shape[-1])
+    else:
+        return (x.astype(mx.bfloat16) * scale).astype(mx.bfloat16).reshape(-1, x.shape[-2]*x.shape[-1])
+
 
 
 def quantized_matvec_custom(
@@ -108,4 +132,17 @@ def quantized_linear(
     w: QuantizedWeights,
     bias: mx.array | None = None,
 ) -> mx.array:
-    pass
+    # 实现解包后的线性层计算
+    # 1.解包weights
+    scale = w.scales
+    bias_w = w.biases
+    group_size = w.group_size
+    bits = w.bits
+    weight = w.weight
+    # 2.解包weights
+    dequantized_weight = dequantize_weights(weight, scale, bias_w, group_size, bits)
+    # 3.计算线性层
+    output = mx.matmul(x, dequantized_weight.T)
+    if bias is not None:
+        output = output + bias
+    return output
