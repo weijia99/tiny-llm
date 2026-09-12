@@ -2,6 +2,8 @@ from typing import Any
 
 import mlx.core as mx
 
+from extensions import tiny_llm_ext
+
 
 def dequantize_linear(mx_layer: Any) -> mx.array:
     w = mx.dequantize(
@@ -66,7 +68,18 @@ def quantized_matmul(
     use_simdgroup: bool = False,
     use_split_k: bool = False,
 ) -> mx.array:
-    pass
+    # 实现转发到对应的C++接口
+    return tiny_llm_ext.quantized_matmul(
+        scales,
+        biases,
+        group_size,
+        bits,
+        a,
+        b,
+        transpose_b,
+        use_simdgroup,
+        use_split_k,
+    )
 
 
 def dequantize_weights(
@@ -86,20 +99,21 @@ def dequantize_weights(
     shifts = mx.arange(32//bits, dtype=mx.int32)*bits
     # 生成对应的mask0，4，8，12，16，20，24，28，相当于解开了32位的uint32，变成了8个uint4
     x = (weight[..., None] >> shifts) & ((1 << bits) - 1)
+    x = x.reshape(*x.shape[:-2], x.shape[-2]*x.shape[-1])
     # 左边形状 (..., N/8, 1)，右边形状 (8,)。按广播规则，最后两维对齐后扩展成 (..., N/8, 8)
     # 最终x的形状为 (..., N/8, 8)
     # 接下来实现scale*x + bias的操作
     #开始计算重复次数
-    repeat_times = group_size // (32 // bits)
+    repeat_times = group_size
     # 广播重复
     scale = mx.repeat(scales[..., None], repeat_times, axis=-1)
-    scale = scale.reshape(*scale.shape[:-2], x.shape[-2], -1)
+    scale = scale.reshape(x.shape)
     if biases is not None:
         bias = mx.repeat(biases[..., None], repeat_times, axis=-1)
-        bias = bias.reshape(*bias.shape[:-2], x.shape[-2], -1)
-        return (x.astype(mx.bfloat16) * scale + bias).astype(mx.bfloat16).reshape(-1, x.shape[-2]*x.shape[-1])
+        bias = bias.reshape(x.shape)
+        return (x.astype(mx.bfloat16) * scale + bias).astype(mx.bfloat16)
     else:
-        return (x.astype(mx.bfloat16) * scale).astype(mx.bfloat16).reshape(-1, x.shape[-2]*x.shape[-1])
+        return (x.astype(mx.bfloat16) * scale).astype(mx.bfloat16)
 
 
 
@@ -140,9 +154,21 @@ def quantized_linear(
     bits = w.bits
     weight = w.weight
     # 2.解包weights
-    dequantized_weight = dequantize_weights(weight, scale, bias_w, group_size, bits)
+    # dequantized_weight = dequantize_weights(weight, scale, bias_w, group_size, bits)
     # 3.计算线性层
-    output = mx.matmul(x, dequantized_weight.T)
+    # output = mx.matmul(x, dequantized_weight.T)
+    # 更新实现对应的c++实现
+    output  = quantized_matmul(
+        scales=scale,
+        biases=bias_w,
+        group_size=group_size,
+        bits=bits,
+        a=x,
+        b=weight,
+        transpose_b=True,
+        use_simdgroup=w.use_simdgroup_matmul,
+        use_split_k=w.use_split_k_matmul,
+    )
     if bias is not None:
         output = output + bias
     return output

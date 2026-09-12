@@ -11,6 +11,7 @@ void load_library(const char *path);
 
 // Week 2, Day 3: implement the wrapper and the initial vanilla/matvec paths.
 // Week 2, Days 6-7: extend the same interface with SIMD-matrix and Split-K scheduling.
+// 桥接器，桥接 C++ 和 Python 的接口
 mx::array quantized_matmul(const mx::array &scales, const mx::array &biases, const int group_size, const int bits,
                            const mx::array &a, const mx::array &b, const bool transpose_b,
                            const bool use_simdgroup = true, const bool use_split_k = false, mx::StreamOrDevice s = {});

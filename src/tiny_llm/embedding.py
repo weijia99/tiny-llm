@@ -32,8 +32,8 @@ class QuantizedEmbedding:
 
     def __call__(self, x: mx.array) -> mx.array:
         # 返回嵌入后的结果
-        weight = dequantize_weights(self.weight.weight, self.weight.scales, self.weight.biases, self.weight.group_size, self.weight.bits)
-        return weight[x]
+        weight = dequantize_weights(self.weight.weight[x], self.weight.scales[x],  None if self.weight.biases is None else self.weight.biases[x], self.weight.group_size, self.weight.bits)
+        return weight
 
     def as_linear(self, x: mx.array) -> mx.array:
         return quantized_linear(x, self.weight)
