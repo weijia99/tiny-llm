@@ -1,13 +1,27 @@
 # 🚧 Week 2 Day 7: Split-K Prefill
 
-> **Status: Experimental.** See the
-> [Week 2 verification matrix](./week2-overview.md#verification-status) for
-> what is continuously tested, locally measured, and still under review.
+Day 6 leaves a reusable course-owned 32×32×32 tile and one visible dispatch
+point in `QuantizedMatmul::eval_gpu`. Day 7 keeps that tile unchanged and
+completes the existing Split-K accumulation and reduction shells in
+`quantized_matmul.metal`, plus the shape policy at the same C++ dispatch point.
+No new public matmul function is needed.
 
-Day 6's cooperative loads brought long-row prefill near MLX. Its follow-up sweep shows a different
-problem at short prefill: Qwen's narrow K/V projections do not launch enough
-independent result tiles to occupy the GPU. Today we split the reduction
-dimension only until that grid is large enough.
+Begin with the unsplit short K projection in Task 1. Then add one partition
+dimension, choose the partition count from the result-grid occupancy, and
+reduce the private planes. The focused day gate exercises the eligible K/V
+shape, a partial output tile, and the exact fallback to Day 6:
+
+```bash
+pdm run build-ext
+pdm run test --week 2 --day 7
+```
+
+The short K/V projection is the learner-owned optimization target. Qwen's
+narrow outputs do not launch enough independent result tiles to occupy the GPU,
+so split the reduction dimension only until that grid is large enough.
+The matched long-row control still trails MLX; it tells us that extra
+partitions are neutral once the ordinary result grid is occupied, not that the
+base tile has reached library parity.
 
 This chapter is not a general split-K library. It optimizes the model shapes we
 actually run:
@@ -174,15 +188,30 @@ pdm run bench-week2-progression --offline --solution tiny_llm --repeats 4 \
   --prefill-logits last
 ```
 
-Repeat the operator comparison at the 128-token acceptance shape and at a long
-control such as 2,048 tokens. Attach the three end-to-end comparisons and the
-per-projection SIMD/Split-K/MLX table at each crossover candidate. Retain
-Split-K only below the measured crossover: it must improve the under-filled
-projection, preserve one-token decode, and fall back exactly to Day 6 when the
-ordinary result grid is already occupied. Record the accumulation and reduction
-dispatches beside the calculated partition policy and operator table. The final
-stretch-goal acceptance run must still reach 80%
-of MLX in both phases.
+For your checkpoint, keep one short under-filled comparison and one long
+occupied-grid control. Retain Split-K only when it improves the short
+projection, preserves one-token decode, and falls back exactly to Day 6 for the
+long control. The fixed 128-prompt/129-output row is the representative
+complete-model result; the performance appendix owns the full crossover
+campaign.
+
+On the checked M4 Pro, the balanced final-main evidence supports this narrower
+result:
+
+- at `M=32`, K/V/O/down improve in both execution positions, Q reverses
+  direction, and gate/up are neutral;
+- complete-model prefill improves from 537.92 to 599.81 tok/s, or 11.5%, while
+  decode is neutral;
+- at `M=128`, complete-model prefill is 706.50 versus 707.41 tok/s and decode
+  is 66.28 versus 65.83 tok/s;
+- at `M=2,048`, complete-model prefill is 551.48 versus 547.73 tok/s and every
+  projection uses the unsplit policy.
+
+The final 128-token checkpoint reaches 88.2% of full-MLX prefill and 87.0% of
+full-MLX decode throughput. These values support the fixed-workload stretch
+goal, not a universal Split-K crossover or 80% claim. See
+`benchmark_results/task367-final-main/task367-final-main-benchmark-ledger.md`
+for every raw sample and the balanced-order drift controls.
 
 The [reference checkpoint](./appendix-performance.md#day-7-split-k-only-below-the-crossover)
 pairs the short-shape operator gains with the end-to-end result and keeps the
@@ -201,8 +230,16 @@ optimize matvec -> benchmark decode -> optimize model kernels -> benchmark decod
 -> measure tile occupancy -> optimize split-K -> benchmark the complete checkpoint
 ```
 
-Week 3 inherits these projection schedules. Paging is evaluated separately on
-cache writes, direct page reads, attention time, and end-to-end throughput; it
-does not receive credit for the Day 7 projection gain.
+Week 3 keeps the same quantized-linear interfaces but deliberately selects MLX
+quantized projections in its dense model and scheduler factory. Its cache,
+attention, paging, batching, and scheduling remain course-owned. Paging is
+evaluated separately on cache writes, direct page reads, attention time, and
+end-to-end throughput; it does not receive credit for either the Day 7
+projection result or the separately measured projection-seam gain.
+
+If you want to continue without implementing Split-K, keep the Day 6
+quantized-linear interface and use the unsplit tile. You may also substitute
+MLX at this one projection seam while preserving the course model. Neither
+choice is the same as running the separate `--solution mlx` baseline.
 
 {{#include copyright.md}}

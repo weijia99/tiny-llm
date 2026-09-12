@@ -219,7 +219,12 @@ class Qwen3TransformerBlock:
 
 
 class Qwen3ModelWeek2:
-    def __init__(self, mlx_model: Any, checkpoint: str = "split-k"):
+    def __init__(
+        self,
+        mlx_model: Any,
+        checkpoint: str = "split-k",
+        use_mlx_quantized_linear: bool = False,
+    ):
         self.num_hidden_layers = mlx_model.args.num_hidden_layers
         self.num_attention_heads = mlx_model.args.num_attention_heads
         self.num_kv_heads = mlx_model.args.num_key_value_heads
