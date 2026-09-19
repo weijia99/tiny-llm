@@ -1,8 +1,16 @@
+
 #include <mlx/dtype.h>
 #include <stdexcept>
 #include <string>
 
 #include "tiny_llm_ext.h"
+
+
+
+#ifdef _METAL_
+#include "mlx/backend/metal/device.h"
+#include "mlx/backend/metal/utils.h"
+#endif
 
 namespace tiny_llm_ext {
 
@@ -97,8 +105,65 @@ void QuantizedMatmul::eval_cpu(const std::vector<mx::array> &, std::vector<mx::a
     throw std::runtime_error("QuantizedMatmul has no CPU implementation.");
 }
 
-void QuantizedMatmul::eval_gpu(const std::vector<mx::array> &, std::vector<mx::array> &) {
-    checkpoint_todo("QuantizedMatmul::eval_gpu", "Week 2, Day 3");
+void QuantizedMatmul::eval_gpu(const std::vector<mx::array> &inputs, std::vector<mx::array> &outputs) {
+    // checkpoint_todo("QuantizedMatmul::eval_gpu", "Week 2, Day 3");
+  // 数值绑定到metal kernel上面去
+  auto &a = inputs[0];
+  auto &b = inputs[1];
+  auto &scales = inputs[2];
+  auto &biases = inputs[3];
+  auto &out = outputs[0];
+    out.set_data(mx::allocator::malloc(out.nbytes()));
+
+    // Each primitive carries the stream it should execute on
+    // and each stream carries its device identifiers
+    auto &s = stream();
+    // We get the needed metal device using the stream
+    auto &d = mx::metal::device(s.device);
+    size_t nelem = out.size();
+    bool use_simdgroup = use_simdgroup_;
+    //先强制使用vanilla的kernel，后续可以根据参数选择不同的kernel
+    auto library = d.get_library("tiny_llm_ext");
+    auto kernel = d.get_kernel(
+    "quantized_matmul_vanilla_w4a16_g128_bfloat16",
+    library
+);
+    // 嵌入到metal kernel中去
+        // Prepare to encode kernel
+    auto &compute_encoder = mx::metal::get_command_encoder(s);
+    compute_encoder.set_compute_pipeline_state(kernel);
+
+    compute_encoder.set_input_array(a, 0);
+    compute_encoder.set_input_array(b, 1);
+    compute_encoder.set_input_array(scales, 2);
+    compute_encoder.set_input_array(biases, 3);
+    compute_encoder.set_output_array(out, 4);
+    const int N = a.shape().back();
+    const int K = out.shape().back();
+    const int M = a.size() / N;
+    compute_encoder.set_bytes(M, 5);
+    compute_encoder.set_bytes(N, 6);
+    compute_encoder.set_bytes(K, 7);
+
+       // We launch 1 thread for each input and make sure that the number of
+    // threads in any given threadgroup is not higher than the max allowed
+    size_t tgp_size = std::min(nelem, kernel->maxTotalThreadsPerThreadgroup());
+
+    // Fix the 3D size of the launch grid (in terms of threads)
+    const size_t threads_x = std::min<size_t>(M, 8);
+    const size_t threads_y = std::min<size_t>(
+    K,
+    kernel->maxTotalThreadsPerThreadgroup() / threads_x
+);
+
+MTL::Size group_dims = MTL::Size(threads_x, threads_y, 1);
+    // Fix the 3D size of the launch grid (in terms of threads)
+    MTL::Size grid_dims = MTL::Size(M, K, 1);
+    //grid发射的是M*K个线程，每个线程计算一个输出元素
+    // Launch the grid with the given number of threads divided among
+    // the given threadgroups
+    compute_encoder.dispatch_threads(grid_dims, group_dims);
+
 }
 
 // Week 3, Day 4. The earlier Week 2 checkpoints keep the readable row lookup.
