@@ -11,7 +11,7 @@
 #include "mlx/backend/metal/device.h"
 #include "mlx/backend/metal/utils.h"
 #endif
-
+ 
 namespace tiny_llm_ext {
 
 namespace {

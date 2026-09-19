@@ -138,7 +138,16 @@ def quantized_matvec_custom(
     b: mx.array,
     transpose_b: bool = False,
 ) -> mx.array:
-    pass
+    return tiny_llm_ext.quantized_matmul(
+        scales,
+        biases,
+        group_size,
+        bits,
+        a,
+        b,
+        transpose_b,
+        True,
+    )
 
 
 def quantized_matmul_vanilla(
@@ -150,7 +159,16 @@ def quantized_matmul_vanilla(
     b: mx.array,
     transpose_b: bool = False,
 ) -> mx.array:
-    pass
+    return tiny_llm_ext.quantized_matmul(
+        scales,
+        biases,
+        group_size,
+        bits,
+        a,
+        b,
+        transpose_b,
+        False
+    )
 
 
 def quantized_linear(
