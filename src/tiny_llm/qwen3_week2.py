@@ -4,11 +4,11 @@ import mlx.core as mx
 
 from .attention import scaled_dot_product_attention_grouped
 from .basics import linear, silu
-from .embedding import Embedding
+from .embedding import Embedding, QuantizedEmbedding
 from .kv_cache import TinyKvCache, TinyKvFullCache
 from .layer_norm import RMSNorm
 from .positional_encoding import RoPE
-from .quantize import QuantizedWeights, dequantize_linear
+from .quantize import QuantizedWeights, dequantize_linear, quantized_linear
 from .week2_kernels import FastRMSNorm, FastRoPE, swiglu
 
 WEEK2_CHECKPOINTS = (
@@ -24,6 +24,11 @@ WEEK2_CHECKPOINTS = (
 
 DECODE_ATTENTION_MAX_CONTEXT = 256
 DECODE_ATTENTION_MAX_QUERY = 2
+
+def model_linear(x: mx.array, weight: mx.array | QuantizedWeights) -> mx.array:
+    if isinstance(weight, QuantizedWeights):
+        return quantized_linear(x, weight)
+    return linear(x, weight)
 
 
 class Qwen3MultiHeadAttention:
@@ -71,11 +76,13 @@ class Qwen3MultiHeadAttention:
         cache: TinyKvCache,
         mask: mx.array | str | None = None,
     ) -> mx.array:
-        q = linear(x, self.wq).reshape(*x.shape[:-1], self.num_heads, self.head_dim)
-        k = linear(x, self.wk).reshape(
+        q = model_linear(x, self.wq).reshape(
+            *x.shape[:-1], self.num_heads, self.head_dim
+        )
+        k = model_linear(x, self.wk).reshape(
             *x.shape[:-1], self.num_kv_heads, self.head_dim
         )
-        v = linear(x, self.wv).reshape(
+        v = model_linear(x, self.wv).reshape(
             *x.shape[:-1], self.num_kv_heads, self.head_dim
         )
         rms_norm_q = RMSNorm(self.head_dim, self.q_norm, self.rms_norm_eps)
@@ -94,7 +101,7 @@ class Qwen3MultiHeadAttention:
         output = output.swapaxes(-2, -3).reshape(
             *x.shape[:-1], self.num_heads * self.head_dim
         )
-        return linear(output, self.wo)
+        return model_linear(output, self.wo)
 
 
 class Qwen3MLP:
@@ -115,7 +122,9 @@ class Qwen3MLP:
         self.use_fast_swiglu = use_fast_swiglu
 
     def __call__(self, x: mx.array) -> mx.array:
-        return linear(silu(linear(x, self.w_gate)) * linear(x, self.w_up), self.w_down)
+        gate = model_linear(x, self.w_gate)
+        up = model_linear(x, self.w_up)
+        return model_linear(silu(gate) * up, self.w_down)
 
 
 class Qwen3TransformerBlock:
@@ -233,15 +242,25 @@ class Qwen3ModelWeek2:
         self.rms_norm_eps = mlx_model.args.rms_norm_eps
         self.hidden_size = mlx_model.args.hidden_size
         self.vocab_size = mlx_model.args.vocab_size
-        self.embedding = Embedding(
-            mlx_model.args.vocab_size,
-            mlx_model.args.hidden_size,
-            dequantize_linear(mlx_model.model.embed_tokens),
-        )
-        self.precision = mx.bfloat16
         self.checkpoint = checkpoint
         self.mlx_model = mlx_model
-        use_fast_kernels = checkpoint != "kv-cache"
+        use_quantized_weights = checkpoint == "quantized-matvec"
+
+        def model_weight(mlx_layer: Any) -> mx.array | QuantizedWeights:
+            if use_quantized_weights:
+                return QuantizedWeights.from_mlx_layer(mlx_layer)
+            return dequantize_linear(mlx_layer)
+
+        embedding_weight = model_weight(mlx_model.model.embed_tokens)
+        if isinstance(embedding_weight, QuantizedWeights):
+            self.embedding = QuantizedEmbedding(
+                self.vocab_size, self.hidden_size, embedding_weight
+            )
+        else:
+            self.embedding = Embedding(
+                self.vocab_size, self.hidden_size, embedding_weight
+            )
+        self.precision = mx.bfloat16
         self.layers_inner = [
             Qwen3TransformerBlock(
                 self.num_attention_heads,
@@ -250,25 +269,25 @@ class Qwen3ModelWeek2:
                 self.head_dim,
                 self.intermediate_size,
                 self.rms_norm_eps,
-                dequantize_linear(self.mlx_model.model.layers[i].self_attn.q_proj),
-                dequantize_linear(self.mlx_model.model.layers[i].self_attn.k_proj),
-                dequantize_linear(self.mlx_model.model.layers[i].self_attn.v_proj),
-                dequantize_linear(self.mlx_model.model.layers[i].self_attn.o_proj),
-                self.mlx_model.model.layers[i].self_attn.q_norm.weight,
-                self.mlx_model.model.layers[i].self_attn.k_norm.weight,
-                dequantize_linear(self.mlx_model.model.layers[i].mlp.gate_proj),
-                dequantize_linear(self.mlx_model.model.layers[i].mlp.up_proj),
-                dequantize_linear(self.mlx_model.model.layers[i].mlp.down_proj),
-                self.mlx_model.model.layers[i].input_layernorm.weight,
-                self.mlx_model.model.layers[i].post_attention_layernorm.weight,
+                model_weight(layer.self_attn.q_proj),
+                model_weight(layer.self_attn.k_proj),
+                model_weight(layer.self_attn.v_proj),
+                model_weight(layer.self_attn.o_proj),
+                layer.self_attn.q_norm.weight,
+                layer.self_attn.k_norm.weight,
+                model_weight(layer.mlp.gate_proj),
+                model_weight(layer.mlp.up_proj),
+                model_weight(layer.mlp.down_proj),
+                layer.input_layernorm.weight,
+                layer.post_attention_layernorm.weight,
                 self.mlx_model.args.max_position_embeddings,
                 self.mlx_model.args.rope_theta,
-                use_fast_rms_norm=use_fast_kernels,
-                use_fast_rope=use_fast_kernels,
-                use_fast_swiglu=use_fast_kernels,
-                use_decode_attention=use_fast_kernels,
+                use_fast_rms_norm=False,
+                use_fast_rope=False,
+                use_fast_swiglu=False,
+                use_decode_attention=False,
             )
-            for i in range(self.num_hidden_layers)
+            for layer in self.mlx_model.model.layers
         ]
         self.norm = RMSNorm(
             mlx_model.args.hidden_size,
