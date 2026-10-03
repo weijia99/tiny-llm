@@ -66,7 +66,16 @@ def mlx_quantized_linear(
     w: QuantizedWeights,
     bias: mx.array | None = None,
 ) -> mx.array:
-    pass
+    output = mx.quantized_matmul(
+        x,
+        w.weight,
+        scales=w.scales,
+        biases=w.biases,
+        transpose=True,
+        group_size=w.group_size,
+        bits=w.bits,
+    )
+    return output if bias is None else output + bias
 
 
 def quantized_matmul(
@@ -176,29 +185,30 @@ def quantized_linear(
     w: QuantizedWeights,
     bias: mx.array | None = None,
 ) -> mx.array:
-    # 实现解包后的线性层计算
-    # 1.解包weights
-    scale = w.scales
-    bias_w = w.biases
-    group_size = w.group_size
-    bits = w.bits
-    weight = w.weight
-    # 2.解包weights
-    # dequantized_weight = dequantize_weights(weight, scale, bias_w, group_size, bits)
-    # 3.计算线性层
-    # output = mx.matmul(x, dequantized_weight.T)
-    # 更新实现对应的c++实现
-    output  = quantized_matmul(
-        scales=scale,
-        biases=bias_w,
-        group_size=group_size,
-        bits=bits,
-        a=x,
-        b=weight,
-        transpose_b=True,
-        use_simdgroup=w.use_simdgroup_matmul,
-        use_split_k=w.use_split_k_matmul,
+    if w.use_mlx_quantized_linear:
+        return mlx_quantized_linear(x, w, bias)
+    rows = 1
+    for size in x.shape[:-1]:
+        rows *= size
+    operation = (
+        quantized_matvec_custom
+        if rows <= 8 and w.use_simdgroup_matvec
+        else quantized_matmul
     )
-    if bias is not None:
-        output = output + bias
-    return output
+    if operation is quantized_matmul:
+        output = operation(
+            w.scales,
+            w.biases,
+            w.group_size,
+            w.bits,
+            x,
+            w.weight,
+            True,
+            use_simdgroup=w.use_simdgroup_matmul,
+            use_split_k=w.use_split_k_matmul,
+        )
+    else:
+        output = operation(
+            w.scales, w.biases, w.group_size, w.bits, x, w.weight, True
+        )
+    return output if bias is None else output + bias
